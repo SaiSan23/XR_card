@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'dart:async'; // 為了 Future
 
 import 'package:my_app/data/models/user_complete_profile.dart';
 import 'package:my_app/data/supabase_services.dart';
 import 'package:my_app/services/ai_service.dart';
+import 'package:my_app/services/google_search_service.dart';
 import 'package:my_app/core/widgets/expanding_fab.dart';
 import 'package:my_app/core/widgets/xr_business_card.dart';
 
@@ -24,13 +26,22 @@ class _XrSimulatorPageState extends State<XrSimulatorPage> {
   UserCompleteProfile? _userProfile;
 
   late final AiService _aiService;
+  late final GoogleSearchService _googleSearchService;
   bool _isAnalyzing = false;
+  String _companyAnalysisResult = '';
+
+  // --- 「話題建議」的狀態變數 ---
+  List<String> _dialogSuggestions = [];
+  bool _isLoadingSuggestions = false;
+  String? _suggestionError;
 
   @override
   void initState() {
     super.initState();
     _supabaseService = SupabaseService(Supabase.instance.client);
     _aiService = AiService();
+    _googleSearchService = GoogleSearchService();
+
     _initializeCamera();
     _loadUserData();
   }
@@ -68,12 +79,18 @@ class _XrSimulatorPageState extends State<XrSimulatorPage> {
     debugPrint('=============================');
 
     if (mounted) {
-      setState(() => _isAnalyzing = false);
-
       // 為了避免顯示原始錯誤碼，我們做個判斷
       final displayResult = (result != null && result.contains('UNAVAILABLE'))
           ? '模型目前忙碌中，請稍後再試。'
           : result ?? '沒有分析結果。';
+
+      setState(() {
+        _isAnalyzing = false;
+        if (!displayResult.contains('模型目前') &&
+            !displayResult.contains('沒有分析結果')) {
+          _companyAnalysisResult = displayResult;
+        }
+      });
 
       showDialog(
         context: context,
@@ -89,6 +106,204 @@ class _XrSimulatorPageState extends State<XrSimulatorPage> {
         ),
       );
     }
+  }
+
+  // --- 話題建議 ---
+  Future<void> _fetchDialogSuggestions() async {
+    if (_isLoadingSuggestions) return;
+    setState(() {
+      _isLoadingSuggestions = true;
+      _suggestionError = null;
+      _dialogSuggestions = [];
+    });
+
+    _showSuggestionsDialog(); // 顯示 Loading Dialog
+
+    try {
+      // 獲取公司名稱和職稱
+      final companyName = _userProfile?.company;
+      final jobTitle = _userProfile?.jobTitle;
+
+      if (companyName == null || companyName.isEmpty) {
+        throw Exception('未設定公司名稱');
+      }
+
+      String? companyInfo;
+      List<String> newsSnippets = [];
+      String? lastSummary;
+
+      // 1. 獲取企業細節 (重用已分析的結果)
+      if (_companyAnalysisResult.isNotEmpty) {
+        companyInfo = _companyAnalysisResult;
+      } else {
+        companyInfo = null;
+      }
+
+      // 2. 獲取時事新聞 (傳入職稱)
+      newsSnippets = await _fetchNews(companyName, jobTitle); // <--- 修改
+
+      // 3. 獲取上次對話回顧 (Supabase)
+      // [!] 提醒：您需要將 contactId 傳入此頁面
+      // final int? currentContactId = widget.contactId;
+      final int? currentContactId = null; // 暫時用 null
+
+      if (currentContactId != null) {
+        try {
+          lastSummary = await _supabaseService.fetchLatestConversationSummary(
+            currentContactId,
+          );
+        } catch (e) {
+          debugPrint("Error fetching summary: $e");
+        }
+      }
+
+      // 4. 生成「開場白」 (傳入職稱)
+      _dialogSuggestions = await _aiService.generateSuggestions(
+        companyName,
+        jobTitle,
+        companyInfo,
+        newsSnippets,
+        lastSummary,
+      );
+    } catch (e) {
+      debugPrint('Error fetching suggestions: $e');
+      if (mounted) {
+        setState(() {
+          _suggestionError = '載入建議時發生錯誤: $e';
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingSuggestions = false);
+        Navigator.pop(context); // 關閉 Loading Dialog
+        _showSuggestionsDialog(); // 開啟顯示結果或錯誤的 Dialog
+      }
+    }
+  }
+
+  // --- 輔助函式：搜尋新聞 ---
+  Future<List<String>> _fetchNews(String companyName, String? jobTitle) async {
+    List<String> snippets = [];
+    try {
+      print('正在搜尋關於 $companyName ($jobTitle) 的新聞...');
+
+      // 建立動態的搜尋查詢列表
+      List<String> queries = ["\"$companyName\" 產業動態", "\"$companyName\" 最近新聞"];
+
+      // 如果有職稱，加入職稱相關的搜尋
+      if (jobTitle != null && jobTitle.isNotEmpty) {
+        queries.add("\"$jobTitle\" 產業趨勢");
+        queries.add("\"$jobTitle\" 最新消息");
+      }
+
+      // 使用修正後的呼叫方式 (位置參數)
+      final searchResults = await _googleSearchService.search(queries);
+
+      // 解析 searchResults (List<Map<String, String>>)
+      if (searchResults.isNotEmpty) {
+        for (var item in searchResults) {
+          String title = item['title'] ?? '';
+          String snippet = item['snippet'] ?? '';
+          String combined = title.isNotEmpty ? "$title：$snippet" : snippet;
+
+          if (combined.isNotEmpty) {
+            snippets.add(
+              combined.length > 100
+                  ? '${combined.substring(0, 100)}...'
+                  : combined,
+            );
+          }
+        }
+      }
+      print('新聞摘要: $snippets');
+    } catch (e) {
+      debugPrint("Error fetching news from Google Search: $e");
+    }
+    return snippets;
+  }
+
+  // --- 輔助函式：顯示建議的 Dialog (Modal Bottom Sheet) ---
+  void _showSuggestionsDialog() {
+    showModalBottomSheet(
+      context: context,
+      isDismissible: !_isLoadingSuggestions, // 載入中不可關閉
+      enableDrag: !_isLoadingSuggestions,
+      builder: (context) {
+        Widget content;
+        if (_isLoadingSuggestions) {
+          content = const Center(
+            child: Padding(
+              padding: EdgeInsets.all(32.0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text('正在為您產生對話建議...'),
+                ],
+              ),
+            ),
+          );
+        } else if (_suggestionError != null) {
+          content = Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32.0),
+              child: Text('錯誤: $_suggestionError'),
+            ),
+          );
+        } else if (_dialogSuggestions.isEmpty) {
+          content = const Center(
+            child: Padding(
+              padding: EdgeInsets.all(32.0),
+              child: Text('目前沒有對話建議'),
+            ),
+          );
+        } else {
+          // 成功取得建議
+          content = ListView(
+            padding: const EdgeInsets.symmetric(vertical: 20.0),
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24.0,
+                  vertical: 8.0,
+                ),
+                child: Text(
+                  '試試看這樣開場：',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              ..._dialogSuggestions.map(
+                (suggestion) => ListTile(
+                  leading: const Padding(
+                    padding: EdgeInsets.only(left: 8.0),
+                    child: Icon(
+                      Icons.lightbulb_outline,
+                      color: Colors.amber,
+                      size: 28,
+                    ),
+                  ),
+                  title: Text(suggestion),
+                  onTap: () {
+                    Navigator.pop(context);
+                  },
+                ),
+              ),
+            ],
+          );
+        }
+
+        return Container(
+          padding: const EdgeInsets.all(16.0),
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 300),
+            child: content,
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _initializeCamera() async {
@@ -116,6 +331,8 @@ class _XrSimulatorPageState extends State<XrSimulatorPage> {
 
   Future<void> _loadUserData() async {
     try {
+      // [!] 這裡目前是讀取 app 使用者自己的資料
+      // 未來您需要修改這裡，讓它可以讀取 'contact' 的資料
       final profile = await _supabaseService.fetchUserCompleteProfile();
       if (mounted) {
         setState(() {
@@ -201,7 +418,7 @@ class _XrSimulatorPageState extends State<XrSimulatorPage> {
               profile: _userProfile,
               onAnalyzePressed: _runCompanyAnalysis, // 企業分析
               onRecordPressed: () => _showSnackBar("點擊了對話回顧"), // 對話回顧
-              onChatPressed: () => _showSnackBar("點擊了話題建議"), // 話題建議
+              onChatPressed: _fetchDialogSuggestions, // 話題建議
             ),
           ),
 
