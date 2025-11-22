@@ -1,8 +1,40 @@
 import 'package:flutter/material.dart';
 import 'package:my_app/services/ai_service.dart';
+import 'package:my_app/core/widgets/xr_general_dialog.dart';
 
 class DeveloperTestSection extends StatelessWidget {
   const DeveloperTestSection({super.key});
+
+  // --- 用來呼叫 XR 風格彈窗的輔助函式 ---
+  void _showXrDialog(
+    BuildContext context,
+    String title,
+    IconData icon,
+    Widget child,
+  ) {
+    showGeneralDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Close',
+      barrierColor: Colors.black.withOpacity(0.3),
+      transitionDuration: const Duration(milliseconds: 400),
+      transitionBuilder: (context, animation, secondaryAnimation, child) {
+        return FadeTransition(
+          opacity: animation,
+          child: ScaleTransition(
+            scale: CurvedAnimation(
+              parent: animation,
+              curve: Curves.easeOutBack,
+            ),
+            child: child,
+          ),
+        );
+      },
+      pageBuilder: (context, animation, secondaryAnimation) {
+        return XrGeneralDialog(title: title, icon: icon, child: child);
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -11,18 +43,20 @@ class DeveloperTestSection extends StatelessWidget {
       children: [
         const SizedBox(height: 24),
 
-        _buildSectionTitle(context, '開發測試'),
+        _buildSectionTitle(context, '開發測試 (XR Style Preview)'),
 
-        // 測試 1: 企業分析
+        // 測試 1: 企業分析 (帶有假的人脈資料)
         Card(
           child: ListTile(
             leading: const Icon(Icons.science, color: Colors.orange),
-            title: const Text('測試 AI 企業分析'),
+            title: const Text('測試 AI 企業分析 (XR UI)'),
+            subtitle: const Text('模擬: 天將麒軍 / 工程師 / Flutter'),
             onTap: () async {
               // 1. 準備測試資料
               const testCompany = '天將麒軍股份有限公司';
-              const testJob =
-                  '工程師'; // 雖然 analyzeCompany 目前只用 companyName，但保留參數以備未來擴充
+              // 模擬從 User Profile 撈出來的欄位
+              const mockJobTitle = '資深工程師';
+              const mockSkill = 'Flutter, Dart, AI Integration';
 
               // 2. 顯示 Loading
               ScaffoldMessenger.of(context).showSnackBar(
@@ -32,19 +66,60 @@ class DeveloperTestSection extends StatelessWidget {
               // 3. 呼叫 AiService
               final result = await AiService().analyzeCompany(testCompany);
 
-              // 4. 顯示結果
+              // 4. 顯示結果 (使用 XR 風格)
               if (context.mounted) {
-                showDialog(
-                  context: context,
-                  builder: (ctx) => AlertDialog(
-                    title: const Text('分析結果'),
-                    content: SingleChildScrollView(
-                      child: Text(result ?? '無結果'),
-                    ),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        child: const Text('OK'),
+                _showXrDialog(
+                  context,
+                  testCompany, // 標題
+                  Icons.analytics_outlined, // Icon
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // 模擬的人脈資料區塊
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.05),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: Colors.white.withOpacity(0.1),
+                          ),
+                        ),
+                        child: const Column(
+                          children: [
+                            XrInfoRow(
+                              icon: Icons.badge,
+                              label: '職位',
+                              value: mockJobTitle,
+                            ),
+                            SizedBox(height: 8),
+                            XrInfoRow(
+                              icon: Icons.stars,
+                              label: '擅長',
+                              value: mockSkill,
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+
+                      const Text(
+                        'AI 企業分析報告',
+                        style: TextStyle(
+                          color: Colors.cyanAccent,
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        result ?? '無分析結果',
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 15,
+                          height: 1.6,
+                        ),
                       ),
                     ],
                   ),
@@ -54,14 +129,14 @@ class DeveloperTestSection extends StatelessWidget {
           ),
         ),
 
-        // 測試 2: 話題建議
+        // 測試 2: 話題建議 (XR UI)
         Card(
           child: ListTile(
             leading: const Icon(
               Icons.chat_bubble_outline,
               color: Colors.purple,
             ),
-            title: const Text('測試話題建議 (含新聞搜尋)'),
+            title: const Text('測試話題建議 (XR UI)'),
             subtitle: const Text('模擬情境：NVIDIA / AI 架構師'),
             onTap: () async {
               // 1. 準備模擬資料
@@ -76,18 +151,11 @@ class DeveloperTestSection extends StatelessWidget {
 
               try {
                 final aiService = AiService();
-
-                // 步驟 A: 抓新聞
                 final news = await aiService.fetchCompanyNews(
                   testCompany,
                   testJob,
                 );
-                debugPrint('抓到的新聞數量: ${news.length}');
-
-                // 步驟 B: 抓企業分析
                 final companyInfo = await aiService.analyzeCompany(testCompany);
-
-                // 步驟 C: 綜合所有資訊生成建議
                 final suggestions = await aiService.generateSuggestions(
                   testCompany,
                   testJob,
@@ -96,70 +164,81 @@ class DeveloperTestSection extends StatelessWidget {
                   testLastSummary,
                 );
 
-                // 3. 顯示結果 Dialog
                 if (!context.mounted) return;
-                showDialog(
-                  context: context,
-                  builder: (ctx) => AlertDialog(
-                    title: const Text('話題建議結果'),
-                    content: SingleChildScrollView(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Text(
-                            '【搜尋到的新聞摘要】',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: Colors.blueGrey,
+
+                // 顯示 XR 風格彈窗
+                _showXrDialog(
+                  context,
+                  '話題建議',
+                  Icons.chat_bubble_outline,
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        '試試看這樣開場：',
+                        style: TextStyle(
+                          color: Colors.cyanAccent,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      // 產生建議列表
+                      ...suggestions.map(
+                        (suggestion) => Container(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.05),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: Colors.white.withOpacity(0.1),
                             ),
                           ),
-                          if (news.isEmpty)
-                            const Text(
-                              '無 (請檢查搜尋功能)',
-                              style: TextStyle(fontSize: 12, color: Colors.red),
-                            )
-                          else
-                            ...news.map(
+                          child: ListTile(
+                            leading: const Icon(
+                              Icons.lightbulb_outline,
+                              color: Colors.amberAccent,
+                            ),
+                            title: Text(
+                              suggestion,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 15,
+                              ),
+                            ),
+                            onTap: () => Navigator.pop(context),
+                          ),
+                        ),
+                      ),
+
+                      // (選擇性顯示) 用於除錯的新聞來源
+                      if (news.isNotEmpty) ...[
+                        const SizedBox(height: 20),
+                        Divider(color: Colors.white.withOpacity(0.1)),
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 8.0),
+                          child: Text(
+                            '參考新聞來源:',
+                            style: TextStyle(color: Colors.grey, fontSize: 12),
+                          ),
+                        ),
+                        ...news
+                            .take(2)
+                            .map(
                               (n) => Padding(
                                 padding: const EdgeInsets.only(bottom: 4),
                                 child: Text(
                                   '• $n',
-                                  style: const TextStyle(fontSize: 12),
-                                  maxLines: 2,
+                                  style: const TextStyle(
+                                    color: Colors.grey,
+                                    fontSize: 10,
+                                  ),
+                                  maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 ),
                               ),
                             ),
-                          const Divider(height: 24),
-
-                          const Text(
-                            '【AI 生成開場白】',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: Colors.purple,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          ...suggestions.map(
-                            (s) => Container(
-                              margin: const EdgeInsets.only(bottom: 8.0),
-                              padding: const EdgeInsets.all(8),
-                              decoration: BoxDecoration(
-                                color: Colors.purple.shade50,
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Text(s),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        child: const Text('關閉'),
-                      ),
+                      ],
                     ],
                   ),
                 );
@@ -178,7 +257,6 @@ class DeveloperTestSection extends StatelessWidget {
     );
   }
 
-  // 將原本 SettingPage 的 private method 複製一份進來，保持模組獨立
   Widget _buildSectionTitle(BuildContext context, String title) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8.0, top: 8.0, left: 4.0),

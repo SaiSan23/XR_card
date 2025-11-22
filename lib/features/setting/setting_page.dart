@@ -2,8 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:my_app/core/theme/app_colors.dart';
 import 'package:my_app/features/xr_simulator/xr_simulator_page.dart';
-import 'package:my_app/features/setting/developer_test_section.dart'; // 開發設計按鈕
-import 'package:my_app/services/ai_service.dart'; // AI 服務
+// import 'package:my_app/features/setting/developer_test_section.dart'; // 開發設計按鈕
 
 class SettingPage extends StatefulWidget {
   const SettingPage({super.key});
@@ -14,6 +13,7 @@ class SettingPage extends StatefulWidget {
 
 class _SettingPageState extends State<SettingPage> {
   bool _isResetting = false; // 用於管理重置功能的讀取狀態
+  bool _isPrivacyMode = true; // 用於管理隱私設定的狀態
 
   // 導航到 XR 模擬器頁面的方法
   void _navigateToXrSimulator(BuildContext context) {
@@ -103,20 +103,65 @@ class _SettingPageState extends State<SettingPage> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text(
+                  Text(
                     '開啟模擬功能',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w500,
+                      color: _isPrivacyMode ? Colors.black : Colors.grey,
+                    ),
                   ),
                   ElevatedButton(
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primary,
                       foregroundColor: Colors.white,
+                      // 禁用時的背景色與前景色會由 Flutter 自動處理，通常是灰色
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8),
                       ),
                     ),
-                    onPressed: () => _navigateToXrSimulator(context),
+                    // 根據隱私模式狀態決定按鈕是否可按
+                    onPressed: _isPrivacyMode
+                        ? () => _navigateToXrSimulator(context)
+                        : null,
                     child: const Text('啟動'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 24),
+
+          _buildSectionTitle(context, '隱私管理'),
+          Card(
+            elevation: 1,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 16.0,
+                vertical: 8.0, // 稍微調整垂直間距讓 Switch 看起來置中舒服
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    '開啟交流模式',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
+                  ),
+
+                  Switch(
+                    value: _isPrivacyMode,
+                    activeColor: AppColors.primary, // 開啟時的顏色 (深綠色)
+                    onChanged: (value) {
+                      setState(() {
+                        _isPrivacyMode = value;
+                      });
+                      // TODO:
+                      debugPrint('隱私模式已切換為: $_isPrivacyMode');
+                    },
                   ),
                 ],
               ),
@@ -132,28 +177,22 @@ class _SettingPageState extends State<SettingPage> {
               borderRadius: BorderRadius.circular(12),
             ),
             child: ListTile(
-              title: const Text('帳號設定'), // <--- [修改] 文字保持原樣
+              title: const Text('帳號設定'),
               trailing: _isResetting
                   ? const SizedBox(
-                      // [修改] 讀取時顯示轉圈
                       width: 20,
                       height: 20,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Icon(
-                      Icons.arrow_forward_ios,
-                      size: 16,
-                    ), // [修改] 預設顯示箭頭
-              onTap: _isResetting
-                  ? null
-                  : _resetDemo, // <--- [修改] 點擊時觸發 _resetDemo
+                  : const Icon(Icons.arrow_forward_ios, size: 16),
+              onTap: _isResetting ? null : _resetDemo,
             ),
           ),
 
-          const SizedBox(height: 24), // 與下一區塊間隔
+          const SizedBox(height: 24),
 
           _buildSectionTitle(context, '其他設定'),
-          // ... (其他設定 Card 保持不變)
+
           Card(
             elevation: 1,
             shape: RoundedRectangleBorder(
