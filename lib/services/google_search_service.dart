@@ -24,7 +24,7 @@ class GoogleSearchService {
     }
 
     // 將多個查詢合併成一個，用 "OR" 連接
-    final String queryString = queries.map((q) => '"$q"').join(' OR ');
+    final String queryString = queries.join(' OR ');
 
     // Google Custom Search API (CSE) 的端點
     final Uri uri = Uri.https('www.googleapis.com', '/customsearch/v1', {

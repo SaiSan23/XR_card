@@ -15,7 +15,6 @@ import 'package:my_app/services/ai_service.dart';
 import 'package:my_app/services/bluetooth_service.dart';
 import 'package:my_app/services/nearby_presence.dart';
 import 'package:my_app/services/speech_to_text.dart';
-import 'package:my_app/services/google_search_service.dart';
 import 'package:my_app/core/widgets/expanding_fab.dart';
 import 'package:my_app/core/widgets/xr_business_card.dart';
 
@@ -32,7 +31,6 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
   bool _isCameraInitialized = false;
 
   late final SupabaseService _supabaseService;
-  late final GoogleSearchService _googleSearchService;
   late final AiService _aiService;
   bool _isAnalyzing = false;
   String _companyAnalysisResult = '';
@@ -84,7 +82,6 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
     super.initState();
     _supabaseService = SupabaseService(Supabase.instance.client);
     _aiService = AiService();
-    _googleSearchService = GoogleSearchService();
     _initializeCamera();
 
     // --- 藍牙好友偵測 ---
@@ -162,7 +159,9 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
       // 3️⃣ 查詢該 contact_id 最新紀錄
       final rows = await Supabase.instance.client
           .from('conversation_records')
-          .select('record_id, contact_id, content, summary, updated_at, record_time')
+          .select(
+            'record_id, contact_id, content, summary, updated_at, record_time',
+          )
           .eq('contact_id', contactId)
           .order('record_id', ascending: false)
           .limit(1);
@@ -187,7 +186,6 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
     }
   }
 
-
   // --- 用於執行企業分析 ---
   Future<void> _runCompanyAnalysis(UserCompleteProfile profile) async {
     if (_isAnalyzing) return;
@@ -199,7 +197,7 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
     }
 
     setState(() => _isAnalyzing = true);
-    _showSnackBar('正在為 ${companyName} 進行企業分析...');
+    _showSnackBar('正在為 $companyName 進行企業分析...');
 
     // --- 自動重試邏輯 ---
     const maxRetries = 2; // 最多重試 2 次
@@ -223,23 +221,30 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
     debugPrint('=============================');
 
     if (mounted) {
-      final displayResult = (result != null && result.contains('UNAVAILABLE'))
+      final analysisContent = (result != null && result.contains('UNAVAILABLE'))
           ? '模型目前忙碌中，請稍後再試。'
           : result ?? '沒有分析結果。';
 
       setState(() {
         _isAnalyzing = false;
-        if (!displayResult.contains('模型目前') &&
-            !displayResult.contains('沒有分析結果')) {
-          _companyAnalysisResult = displayResult;
+        if (!analysisContent.contains('模型目前') &&
+            !analysisContent.contains('沒有分析結果')) {
+          _companyAnalysisResult = analysisContent;
         }
       });
+
+      // [修改重點]：組合個人資訊與 AI 分析結果
+      final displayContent =
+          '人脈職位：${profile.jobTitle ?? '未填寫'}\n'
+          '擅長：${profile.skill ?? '未填寫'}\n'
+          '------------------------------\n'
+          '$analysisContent';
 
       showDialog(
         context: context,
         builder: (context) => AlertDialog(
           title: Text('「$companyName」分析報告'),
-          content: SingleChildScrollView(child: Text(displayResult)),
+          content: SingleChildScrollView(child: Text(displayContent)),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
@@ -310,7 +315,6 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
     _showSuggestionsDialog(); // 顯示 Loading Dialog
 
     try {
-      // 獲取公司名稱和職稱
       final companyName = profile.company;
       final jobTitle = profile.jobTitle;
 
@@ -318,24 +322,23 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
         throw Exception('未設定公司名稱');
       }
 
-      String? companyInfo;
-      List<String> newsSnippets = [];
-      String? lastSummary;
-
       // 1. 獲取企業細節 (重用已分析的結果)
+      String? companyInfo;
       if (_companyAnalysisResult.isNotEmpty) {
         companyInfo = _companyAnalysisResult;
-      } else {
-        companyInfo = null;
       }
 
-      // 2. 獲取時事新聞 (傳入職稱)
-      newsSnippets = await _fetchNews(companyName, jobTitle); // <--- 修改
+      // 2. 獲取時事新聞
+      List<String> newsSnippets = await _aiService.fetchCompanyNews(
+        companyName,
+        jobTitle,
+      );
 
       // 3. 獲取上次對話回顧 (Supabase)
-      // [!] 提醒：您需要將 contactId 傳入此頁面
-      // final int? currentContactId = widget.contactId;
-      final int? currentContactId = await _resolveContactIdForUser(profile.userId); // 暫時用 null
+      final int? currentContactId = await _resolveContactIdForUser(
+        profile.userId,
+      );
+      String? lastSummary;
 
       if (currentContactId != null) {
         try {
@@ -347,7 +350,7 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
         }
       }
 
-      // 4. 生成「開場白」 (傳入職稱)
+      // 4. 生成「開場白」
       _dialogSuggestions = await _aiService.generateSuggestions(
         companyName,
         jobTitle,
@@ -369,47 +372,6 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
         _showSuggestionsDialog(); // 開啟顯示結果或錯誤的 Dialog
       }
     }
-  }
-
-  // --- 輔助函式：搜尋新聞 ---
-  Future<List<String>> _fetchNews(String companyName, String? jobTitle) async {
-    List<String> snippets = [];
-    try {
-      print('正在搜尋關於 $companyName ($jobTitle) 的新聞...');
-
-      // 建立動態的搜尋查詢列表
-      List<String> queries = ["\"$companyName\" 產業動態", "\"$companyName\" 最近新聞"];
-
-      // 如果有職稱，加入職稱相關的搜尋
-      if (jobTitle != null && jobTitle.isNotEmpty) {
-        queries.add("\"$jobTitle\" 產業趨勢");
-        queries.add("\"$jobTitle\" 最新消息");
-      }
-
-      // 使用修正後的呼叫方式 (位置參數)
-      final searchResults = await _googleSearchService.search(queries);
-
-      // 解析 searchResults (List<Map<String, String>>)
-      if (searchResults.isNotEmpty) {
-        for (var item in searchResults) {
-          String title = item['title'] ?? '';
-          String snippet = item['snippet'] ?? '';
-          String combined = title.isNotEmpty ? "$title：$snippet" : snippet;
-
-          if (combined.isNotEmpty) {
-            snippets.add(
-              combined.length > 100
-                  ? '${combined.substring(0, 100)}...'
-                  : combined,
-            );
-          }
-        }
-      }
-      print('新聞摘要: $snippets');
-    } catch (e) {
-      debugPrint("Error fetching news from Google Search: $e");
-    }
-    return snippets;
   }
 
   // --- 輔助函式：顯示建議的 Dialog (Modal Bottom Sheet) ---
@@ -604,7 +566,6 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
     return "${dir.path}/$filename";
   }
 
-
   //  查找 contact_id
   Future<int?> _resolveContactIdForUser(int friendUserId) async {
     final myId = _supabaseService.myUserId;
@@ -625,8 +586,6 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
     return null;
   }
 
-
-  
   // 🔹 2. 錄音函式（替代 _toggleRecording）
   // 傳入 friendUserId，根據名片上的使用者執行錄音、轉文字與寫入
   Future<void> _toggleRecordingFor(int friendUserId) async {
@@ -653,7 +612,6 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
           _recordStartedAt = DateTime.now();
         });
         _showSnackBar("開始錄音…（再次點擊停止）");
-
       } else {
         // ====== 停止錄音 ======
         final p = await _recorder.stop();
@@ -685,7 +643,12 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
         String transcript = '';
         try {
           final stt = await _withTimeout(
-            _stt.transcribeFile(_recordPath!, durationSec: DateTime.now().difference(_recordStartedAt!).inSeconds),
+            _stt.transcribeFile(
+              _recordPath!,
+              durationSec: DateTime.now()
+                  .difference(_recordStartedAt!)
+                  .inSeconds,
+            ),
             const Duration(seconds: 180),
             'STT',
           );
@@ -712,7 +675,9 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
             content: transcript.isEmpty ? '（無內容）' : transcript,
             summary: summary,
             eventName: "對話錄音",
-            audioDurationSec: DateTime.now().difference(_recordStartedAt!).inSeconds,
+            audioDurationSec: DateTime.now()
+                .difference(_recordStartedAt!)
+                .inSeconds,
           );
           _showSnackBar("DB 已更新（record_id=$id）");
         } catch (e, st) {
@@ -728,7 +693,6 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
       setState(() => _isRecording = false);
     }
   }
-
 
   Future<void> _openConversationReview(int friendUserId) async {
     try {
@@ -783,7 +747,6 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
                     summary?.isNotEmpty == true ? '摘要：\n$summary' : '摘要：無',
                     style: const TextStyle(fontWeight: FontWeight.w600),
                   ),
-                  
                 ],
               ),
             ),
@@ -933,7 +896,8 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
                   child: XrBusinessCard(
                     profile: profile,
                     onAnalyzePressed: () => _runCompanyAnalysis(profile),
-                    onRecordPressed: () => _openConversationReview(profile.userId),
+                    onRecordPressed: () =>
+                        _openConversationReview(profile.userId),
                     onChatPressed: () => _fetchDialogSuggestions(profile),
                   ),
                 );

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:my_app/core/theme/app_colors.dart';
 import 'package:my_app/features/xr_simulator/xr_simulator_page.dart';
-import 'package:supabase_flutter/supabase_flutter.dart'; // <--- [新增] 引入 Supabase
+import 'package:my_app/features/setting/developer_test_section.dart'; // 開發設計按鈕
+import 'package:my_app/services/ai_service.dart'; // AI 服務
 
 class SettingPage extends StatefulWidget {
   const SettingPage({super.key});
@@ -162,6 +164,9 @@ class _SettingPageState extends State<SettingPage> {
               trailing: Icon(Icons.arrow_forward_ios, size: 16),
             ),
           ),
+
+          // Sai: 測試[企業分析、對話建議]功能
+          // const DeveloperTestSection(),
         ],
       ),
     );
