@@ -3,11 +3,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:collection/collection.dart';
 import 'package:camera/camera.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
-
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
-import 'package:my_app/services/summary_service.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:my_app/data/models/user_complete_profile.dart';
 import 'package:my_app/data/supabase_services.dart';
@@ -15,9 +13,9 @@ import 'package:my_app/services/ai_service.dart';
 import 'package:my_app/services/bluetooth_service.dart';
 import 'package:my_app/services/nearby_presence.dart';
 import 'package:my_app/services/speech_to_text.dart';
-import 'package:my_app/services/google_search_service.dart';
-import 'package:my_app/core/widgets/expanding_fab.dart';
+import 'package:my_app/services/summary_service.dart';
 import 'package:my_app/core/widgets/xr_business_card.dart';
+import 'package:my_app/core/widgets/xr_general_dialog.dart';
 
 class XrSimulatorPage extends StatefulWidget {
   const XrSimulatorPage({super.key});
@@ -32,7 +30,6 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
   bool _isCameraInitialized = false;
 
   late final SupabaseService _supabaseService;
-  late final GoogleSearchService _googleSearchService;
   late final AiService _aiService;
   bool _isAnalyzing = false;
   String _companyAnalysisResult = '';
@@ -84,7 +81,6 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
     super.initState();
     _supabaseService = SupabaseService(Supabase.instance.client);
     _aiService = AiService();
-    _googleSearchService = GoogleSearchService();
     _initializeCamera();
 
     // --- 藍牙好友偵測 ---
@@ -162,7 +158,9 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
       // 3️⃣ 查詢該 contact_id 最新紀錄
       final rows = await Supabase.instance.client
           .from('conversation_records')
-          .select('record_id, contact_id, content, summary, updated_at, record_time')
+          .select(
+            'record_id, contact_id, content, summary, updated_at, record_time',
+          )
           .eq('contact_id', contactId)
           .order('record_id', ascending: false)
           .limit(1);
@@ -187,7 +185,6 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
     }
   }
 
-
   // --- 用於執行企業分析 ---
   Future<void> _runCompanyAnalysis(UserCompleteProfile profile) async {
     if (_isAnalyzing) return;
@@ -199,7 +196,7 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
     }
 
     setState(() => _isAnalyzing = true);
-    _showSnackBar('正在為 ${companyName} 進行企業分析...');
+    _showSnackBar('正在為 $companyName 進行企業分析...');
 
     // --- 自動重試邏輯 ---
     const maxRetries = 2; // 最多重試 2 次
@@ -223,27 +220,68 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
     debugPrint('=============================');
 
     if (mounted) {
-      final displayResult = (result != null && result.contains('UNAVAILABLE'))
+      final analysisContent = (result != null && result.contains('UNAVAILABLE'))
           ? '模型目前忙碌中，請稍後再試。'
           : result ?? '沒有分析結果。';
 
       setState(() {
         _isAnalyzing = false;
-        if (!displayResult.contains('模型目前') &&
-            !displayResult.contains('沒有分析結果')) {
-          _companyAnalysisResult = displayResult;
+        if (!analysisContent.contains('模型目前') &&
+            !analysisContent.contains('沒有分析結果')) {
+          _companyAnalysisResult = analysisContent;
         }
       });
 
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text('「$companyName」分析報告'),
-          content: SingleChildScrollView(child: Text(displayResult)),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('關閉'),
+      // 呼叫共用 XR 彈窗
+      _showGenericXrDialog(
+        title: companyName, // 標題顯示公司名稱
+        icon: Icons.analytics_outlined,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // 人脈資料區塊
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.05),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white.withOpacity(0.1)),
+              ),
+              child: Column(
+                children: [
+                  XrInfoRow(
+                    icon: Icons.badge,
+                    label: '職位',
+                    value: profile.jobTitle ?? '未填寫',
+                  ),
+                  const SizedBox(height: 8),
+                  XrInfoRow(
+                    icon: Icons.stars,
+                    label: '擅長',
+                    value: profile.skill ?? '未填寫',
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+            // 分析內容
+            const Text(
+              'AI 企業分析報告',
+              style: TextStyle(
+                color: Colors.cyanAccent,
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              analysisContent,
+              style: const TextStyle(
+                color: Colors.white70,
+                fontSize: 15,
+                height: 1.6,
+              ),
             ),
           ],
         ),
@@ -310,7 +348,6 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
     _showSuggestionsDialog(); // 顯示 Loading Dialog
 
     try {
-      // 獲取公司名稱和職稱
       final companyName = profile.company;
       final jobTitle = profile.jobTitle;
 
@@ -318,24 +355,23 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
         throw Exception('未設定公司名稱');
       }
 
-      String? companyInfo;
-      List<String> newsSnippets = [];
-      String? lastSummary;
-
       // 1. 獲取企業細節 (重用已分析的結果)
+      String? companyInfo;
       if (_companyAnalysisResult.isNotEmpty) {
         companyInfo = _companyAnalysisResult;
-      } else {
-        companyInfo = null;
       }
 
-      // 2. 獲取時事新聞 (傳入職稱)
-      newsSnippets = await _fetchNews(companyName, jobTitle); // <--- 修改
+      // 2. 獲取時事新聞
+      List<String> newsSnippets = await _aiService.fetchCompanyNews(
+        companyName,
+        jobTitle,
+      );
 
       // 3. 獲取上次對話回顧 (Supabase)
-      // [!] 提醒：您需要將 contactId 傳入此頁面
-      // final int? currentContactId = widget.contactId;
-      final int? currentContactId = await _resolveContactIdForUser(profile.userId); // 暫時用 null
+      final int? currentContactId = await _resolveContactIdForUser(
+        profile.userId,
+      );
+      String? lastSummary;
 
       if (currentContactId != null) {
         try {
@@ -347,7 +383,7 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
         }
       }
 
-      // 4. 生成「開場白」 (傳入職稱)
+      // 4. 生成「開場白」
       _dialogSuggestions = await _aiService.generateSuggestions(
         companyName,
         jobTitle,
@@ -371,128 +407,71 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
     }
   }
 
-  // --- 輔助函式：搜尋新聞 ---
-  Future<List<String>> _fetchNews(String companyName, String? jobTitle) async {
-    List<String> snippets = [];
-    try {
-      print('正在搜尋關於 $companyName ($jobTitle) 的新聞...');
-
-      // 建立動態的搜尋查詢列表
-      List<String> queries = ["\"$companyName\" 產業動態", "\"$companyName\" 最近新聞"];
-
-      // 如果有職稱，加入職稱相關的搜尋
-      if (jobTitle != null && jobTitle.isNotEmpty) {
-        queries.add("\"$jobTitle\" 產業趨勢");
-        queries.add("\"$jobTitle\" 最新消息");
-      }
-
-      // 使用修正後的呼叫方式 (位置參數)
-      final searchResults = await _googleSearchService.search(queries);
-
-      // 解析 searchResults (List<Map<String, String>>)
-      if (searchResults.isNotEmpty) {
-        for (var item in searchResults) {
-          String title = item['title'] ?? '';
-          String snippet = item['snippet'] ?? '';
-          String combined = title.isNotEmpty ? "$title：$snippet" : snippet;
-
-          if (combined.isNotEmpty) {
-            snippets.add(
-              combined.length > 100
-                  ? '${combined.substring(0, 100)}...'
-                  : combined,
-            );
-          }
-        }
-      }
-      print('新聞摘要: $snippets');
-    } catch (e) {
-      debugPrint("Error fetching news from Google Search: $e");
-    }
-    return snippets;
-  }
-
-  // --- 輔助函式：顯示建議的 Dialog (Modal Bottom Sheet) ---
+  // --- 輔助函式：顯示建議的 Dialog 模擬 XR 樣式 ---
   void _showSuggestionsDialog() {
-    showModalBottomSheet(
-      context: context,
-      isDismissible: !_isLoadingSuggestions, // 載入中不可關閉
-      enableDrag: !_isLoadingSuggestions,
-      builder: (context) {
-        Widget content;
-        if (_isLoadingSuggestions) {
-          content = const Center(
-            child: Padding(
-              padding: EdgeInsets.all(32.0),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CircularProgressIndicator(),
-                  SizedBox(height: 16),
-                  Text('正在為您產生對話建議...'),
-                ],
-              ),
+    // 根據狀態決定內容
+    Widget content;
+    if (_isLoadingSuggestions) {
+      content = const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(color: Colors.cyanAccent),
+            SizedBox(height: 16),
+            Text('AI 正在思考話題...', style: TextStyle(color: Colors.white70)),
+          ],
+        ),
+      );
+    } else if (_suggestionError != null) {
+      content = Text(
+        '錯誤: $_suggestionError',
+        style: const TextStyle(color: Colors.redAccent),
+      );
+    } else if (_dialogSuggestions.isEmpty) {
+      content = const Text('目前沒有對話建議', style: TextStyle(color: Colors.white70));
+    } else {
+      // 顯示建議列表
+      content = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '試試看這樣開場：',
+            style: TextStyle(
+              color: Colors.cyanAccent,
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
             ),
-          );
-        } else if (_suggestionError != null) {
-          content = Center(
-            child: Padding(
-              padding: const EdgeInsets.all(32.0),
-              child: Text('錯誤: $_suggestionError'),
-            ),
-          );
-        } else if (_dialogSuggestions.isEmpty) {
-          content = const Center(
-            child: Padding(
-              padding: EdgeInsets.all(32.0),
-              child: Text('目前沒有對話建議'),
-            ),
-          );
-        } else {
-          // 成功取得建議
-          content = ListView(
-            padding: const EdgeInsets.symmetric(vertical: 20.0),
-            children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 24.0,
-                  vertical: 8.0,
-                ),
-                child: Text(
-                  '試試看這樣開場：',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-              ..._dialogSuggestions.map(
-                (suggestion) => ListTile(
-                  leading: const Padding(
-                    padding: EdgeInsets.only(left: 8.0),
-                    child: Icon(
-                      Icons.lightbulb_outline,
-                      color: Colors.amber,
-                      size: 28,
-                    ),
-                  ),
-                  title: Text(suggestion),
-                  onTap: () {
-                    Navigator.pop(context);
-                  },
-                ),
-              ),
-            ],
-          );
-        }
-
-        return Container(
-          padding: const EdgeInsets.all(16.0),
-          child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 300),
-            child: content,
           ),
-        );
-      },
+          const SizedBox(height: 12),
+          ..._dialogSuggestions.map(
+            (suggestion) => Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.05),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white.withOpacity(0.1)),
+              ),
+              child: ListTile(
+                leading: const Icon(
+                  Icons.lightbulb_outline,
+                  color: Colors.amberAccent,
+                ),
+                title: Text(
+                  suggestion,
+                  style: const TextStyle(color: Colors.white, fontSize: 15),
+                ),
+                onTap: () => Navigator.pop(context),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    _showGenericXrDialog(
+      title: '話題建議',
+      icon: Icons.chat_bubble_outline,
+      child: content,
     );
   }
 
@@ -604,7 +583,6 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
     return "${dir.path}/$filename";
   }
 
-
   //  查找 contact_id
   Future<int?> _resolveContactIdForUser(int friendUserId) async {
     final myId = _supabaseService.myUserId;
@@ -625,8 +603,6 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
     return null;
   }
 
-
-  
   // 🔹 2. 錄音函式（替代 _toggleRecording）
   // 傳入 friendUserId，根據名片上的使用者執行錄音、轉文字與寫入
   Future<void> _toggleRecordingFor(int friendUserId) async {
@@ -653,7 +629,6 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
           _recordStartedAt = DateTime.now();
         });
         _showSnackBar("開始錄音…（再次點擊停止）");
-
       } else {
         // ====== 停止錄音 ======
         final p = await _recorder.stop();
@@ -685,7 +660,12 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
         String transcript = '';
         try {
           final stt = await _withTimeout(
-            _stt.transcribeFile(_recordPath!, durationSec: DateTime.now().difference(_recordStartedAt!).inSeconds),
+            _stt.transcribeFile(
+              _recordPath!,
+              durationSec: DateTime.now()
+                  .difference(_recordStartedAt!)
+                  .inSeconds,
+            ),
             const Duration(seconds: 180),
             'STT',
           );
@@ -712,7 +692,9 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
             content: transcript.isEmpty ? '（無內容）' : transcript,
             summary: summary,
             eventName: "對話錄音",
-            audioDurationSec: DateTime.now().difference(_recordStartedAt!).inSeconds,
+            audioDurationSec: DateTime.now()
+                .difference(_recordStartedAt!)
+                .inSeconds,
           );
           _showSnackBar("DB 已更新（record_id=$id）");
         } catch (e, st) {
@@ -728,7 +710,6 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
       setState(() => _isRecording = false);
     }
   }
-
 
   Future<void> _openConversationReview(int friendUserId) async {
     try {
@@ -769,32 +750,42 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
 
       // 3) 顯示 Dialog
       if (!mounted) return;
-      showDialog(
-        context: context,
-        builder: (ctx) {
-          return AlertDialog(
-            title: const Text('對話回顧'),
-            content: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (when != null) Text('時間：$when\n'),
-                  Text(
-                    summary?.isNotEmpty == true ? '摘要：\n$summary' : '摘要：無',
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  
-                ],
+      // 呼叫共用 XR 彈窗
+      _showGenericXrDialog(
+        title: '對話回顧',
+        icon: Icons.history,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (when != null) ...[
+              XrInfoRow(
+                icon: Icons.access_time,
+                label: '時間',
+                value: when.toString().split('.')[0],
+              ),
+              const SizedBox(height: 16),
+              Divider(color: Colors.white.withOpacity(0.1)),
+              const SizedBox(height: 16),
+            ],
+            const Text(
+              '摘要重點',
+              style: TextStyle(
+                color: Colors.cyanAccent,
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
               ),
             ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(),
-                child: const Text('關閉'),
+            const SizedBox(height: 8),
+            Text(
+              summary?.isNotEmpty == true ? summary! : '（本次對話無摘要）',
+              style: const TextStyle(
+                color: Colors.white70,
+                fontSize: 15,
+                height: 1.6,
               ),
-            ],
-          );
-        },
+            ),
+          ],
+        ),
       );
     } catch (e) {
       debugPrint('Review 打開失敗：$e');
@@ -915,53 +906,61 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
             ),
           ),
 
-          // 右下角：懸浮名片
-          Positioned(
-            bottom: 0,
-            right: 0,
-            left: isLandscape ? screenWidth * 0.55 : null,
-            width: isLandscape ? null : screenWidth * 0.75,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: _nearbyFriendIds.map((friendId) {
-                final profile = _allFriendProfiles[friendId];
-                if (profile == null) return const SizedBox.shrink();
-
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 8.0),
-                  child: XrBusinessCard(
-                    profile: profile,
-                    onAnalyzePressed: () => _runCompanyAnalysis(profile),
-                    onRecordPressed: () => _openConversationReview(profile.userId),
-                    onChatPressed: () => _fetchDialogSuggestions(profile),
+          // 右下角：懸浮名片 + 錄音按鈕
+          // 只有在偵測到好友時才顯示
+          if (_nearbyFriendIds.isNotEmpty)
+            Positioned(
+              bottom: 0,
+              right: 0,
+              // 依據螢幕方向決定寬度
+              // 橫屏 (Landscape): 45% (避免擋住太多相機畫面)
+              // 直屏 (Portrait) : 85% (保留原本適合閱讀的寬度)
+              width: isLandscape ? screenWidth * 0.45 : screenWidth * 0.85,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end, // 靠右對齊
+                children: [
+                  // 1. 錄音按鈕 (置於名片上方)
+                  FloatingActionButton.extended(
+                    onPressed: () async {
+                      // 預設對第一個偵測到的好友錄音
+                      final friendId = _nearbyFriendIds.first;
+                      await _toggleRecordingFor(friendId);
+                    },
+                    // 錄音中顯示紅色，否則顯示白色半透明
+                    backgroundColor: _isRecording
+                        ? Colors.redAccent
+                        : Colors.white.withOpacity(0.9),
+                    foregroundColor: _isRecording
+                        ? Colors.white
+                        : const Color(0xFF154549),
+                    icon: Icon(_isRecording ? Icons.stop : Icons.mic),
+                    label: Text(
+                      _isRecording ? "停止並轉錄" : "建立對話錄製",
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
                   ),
-                );
-              }).toList(),
-            ),
-          ),
 
-          // 名片右上：可展開功能按鈕（錄音切換）
-          Positioned(
-            bottom: isLandscape ? 170 : 170,
-            right: 8,
-            child: ExpandingFab(
-              actions: [
-                FabAction(
-                  label: _isRecording ? "停止並轉錄" : "建立對話錄製",
-                  icon: _isRecording ? Icons.stop : Icons.mic,
-                  onPressed: () async {
-                    if (_nearbyFriendIds.isEmpty) {
-                      _showSnackBar("附近沒有偵測到好友，無法開始錄音。");
-                      return;
-                    }
-                    final friendId = _nearbyFriendIds.first;
-                    await _toggleRecordingFor(friendId);
-                  },
-                ),
-              ],
+                  const SizedBox(height: 12), // 按鈕與名片間距
+                  // 2. 名片列表 (若有多人會垂直堆疊)
+                  ..._nearbyFriendIds.map((friendId) {
+                    final profile = _allFriendProfiles[friendId];
+                    if (profile == null) return const SizedBox.shrink();
+
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 8.0),
+                      child: XrBusinessCard(
+                        profile: profile,
+                        onAnalyzePressed: () => _runCompanyAnalysis(profile),
+                        onRecordPressed: () =>
+                            _openConversationReview(profile.userId),
+                        onChatPressed: () => _fetchDialogSuggestions(profile),
+                      ),
+                    );
+                  }),
+                ],
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -972,5 +971,36 @@ class _XrSimulatorPageState extends State<XrSimulatorPage>
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  // 顯示 XR 風格彈窗的底層函式
+  void _showGenericXrDialog({
+    required String title,
+    required IconData icon,
+    required Widget child,
+  }) {
+    showGeneralDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Close',
+      barrierColor: Colors.black.withOpacity(0.3),
+      transitionDuration: const Duration(milliseconds: 400),
+      // 彈出動畫：縮放 + 淡入
+      transitionBuilder: (context, animation, secondaryAnimation, child) {
+        return FadeTransition(
+          opacity: animation,
+          child: ScaleTransition(
+            scale: CurvedAnimation(
+              parent: animation,
+              curve: Curves.easeOutBack,
+            ),
+            child: child,
+          ),
+        );
+      },
+      pageBuilder: (context, animation, secondaryAnimation) {
+        return XrGeneralDialog(title: title, icon: icon, child: child);
+      },
+    );
   }
 }
